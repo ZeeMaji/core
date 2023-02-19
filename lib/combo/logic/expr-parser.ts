@@ -1,7 +1,7 @@
 import { Game } from '../config';
 import { Settings } from '../settings';
 import { gameId } from '../util';
-import { Expr, exprTrue, exprFalse, exprAnd, exprOr, exprAge, exprHas, exprEvent, exprMasks, exprHealth, exprSetting, exprNot, exprCond, exprTrick } from './expr';
+import { Expr, ExprBuilder } from './expr-builder';
 
 const SIMPLE_TOKENS = ['||', '&&', '(', ')', ',', 'true', 'false', '!', '+', '-'] as const;
 
@@ -13,6 +13,8 @@ type Token = TokenSimple | TokenEOF | TokenIdentifier | TokenNumber;
 type TokenType = Token['type'];
 type TokenOfType<T> = Extract<Token, { type: T }>;
 type TokenValue<T> = TokenOfType<T> extends { value: infer TT; } ? TT : true;
+
+type ExprId = { id: number };
 
 type ParseContext = {
   buffer: string;
@@ -30,13 +32,13 @@ export class ExprParser {
   private ctx: ParseContext[] = [];
   private macros: {[k: string]: Macro} = {};
 
-  constructor(private settings: Settings, private game: Game) {}
+  constructor(private builder: ExprBuilder, private settings: Settings, private game: Game) {}
 
   addMacro(name: string, args: string[], buffer: string) {
     this.macros[name] = { args, buffer };
   }
 
-  parse(input: string) {
+  parse(input: string): Expr {
     this.ctx.push({ buffer: input, cursor: 0, macroValues: {} });
 
     const expr = this.parseExpr();
@@ -46,7 +48,7 @@ export class ExprParser {
     }
     this.expect('EOF');
     this.ctx = [];
-    return expr;
+    return this.builder.func(expr.id);
   }
 
   private parseNumericSingle(): number | undefined {
@@ -95,30 +97,30 @@ export class ExprParser {
     return value;
   }
 
-  private parseExprTrue(): Expr | undefined {
+  private parseExprTrue(): ExprId | undefined {
     if (this.accept('true')) {
-      return exprTrue();
+      return { id: this.builder.internTrue() };
     }
   }
 
-  private parseExprFalse(): Expr | undefined {
+  private parseExprFalse(): ExprId | undefined {
     if (this.accept('false')) {
-      return exprFalse();
+      return { id: this.builder.internFalse() };
     }
   }
 
-  private parseExprNot(): Expr | undefined {
+  private parseExprNot(): ExprId | undefined {
     if (this.accept('!')) {
       const expr = this.parseExprSingle();
       if (expr === undefined) {
         throw this.error("Expected expression");
       }
-      return exprNot(expr);
+      return { id: this.builder.internNot(expr.id) };
     }
   }
 
   /* This could be a macro once macros properly handle parens */
-  private parseExprCond(): Expr | undefined {
+  private parseExprCond(): ExprId | undefined {
     if (this.peek('identifier') !== 'cond') {
       return undefined;
     }
@@ -139,10 +141,10 @@ export class ExprParser {
       throw this.error("Expected expression");
     }
     this.expect(')');
-    return exprCond(cond, then, otherwise);
+    return { id: this.builder.internCond(cond.id, then.id, otherwise.id) };
   }
 
-  private parseExprAge(): Expr | undefined {
+  private parseExprAge(): ExprId | undefined {
     if (this.peek('identifier') !== 'age') {
       return undefined;
     }
@@ -153,10 +155,10 @@ export class ExprParser {
       throw this.error(`Expected child or adult at ${this.ctx[0].cursor}`);
     }
     this.expect(')');
-    return exprAge(age);
+    return { id: this.builder.internAge(age) };
   }
 
-  private parseExprHas(): Expr | undefined {
+  private parseExprHas(): ExprId | undefined {
     if (this.peek('identifier') !== 'has') {
       return undefined;
     }
@@ -172,10 +174,10 @@ export class ExprParser {
       count = n;
     }
     this.expect(')');
-    return exprHas(item, count);
+    return { id: this.builder.internHas(item, count) };
   }
 
-  private parseExprEvent(): Expr | undefined {
+  private parseExprEvent(): ExprId | undefined {
     if (this.peek('identifier') !== 'event') {
       return undefined;
     }
@@ -183,10 +185,10 @@ export class ExprParser {
     this.expect('(');
     const event = gameId(this.game, this.expect('identifier'), '_');
     this.expect(')');
-    return exprEvent(event);
+    return { id: this.builder.internEvent(event) };
   }
 
-  private parseExprMasks(): Expr | undefined {
+  private parseExprMasks(): ExprId | undefined {
     if (this.peek('identifier') !== 'masks') {
       return undefined;
     }
@@ -197,24 +199,10 @@ export class ExprParser {
       throw this.error("Expected number");
     }
     this.expect(')');
-    return exprMasks(count);
+    return { id: this.builder.internMasks(count) };
   }
 
-  private parseExprHealth(): Expr | undefined {
-    if (this.peek('identifier') !== 'health') {
-      return undefined;
-    }
-    this.accept('identifier');
-    this.expect('(');
-    const count = this.parseNumeric();
-    if (count === undefined) {
-      throw this.error("Expected number");
-    }
-    this.expect(')');
-    return exprHealth(count);
-  }
-
-  private parseExprSetting(): Expr | undefined {
+  private parseExprSetting(): ExprId | undefined {
     let value: string | boolean = true;
     if (this.peek('identifier') !== 'setting') {
       return undefined;
@@ -226,11 +214,10 @@ export class ExprParser {
       value = this.expect('identifier');
     }
     this.expect(')');
-    return exprSetting(this.settings, key, value);
+    return { id: this.builder.internSetting(this.settings, key, value) };
   }
 
-  private parseExprTrick(): Expr | undefined {
-    let value: string | boolean = true;
+  private parseExprTrick(): ExprId | undefined {
     if (this.peek('identifier') !== 'trick') {
       return undefined;
     }
@@ -238,10 +225,10 @@ export class ExprParser {
     this.expect('(');
     const trick = this.expect('identifier');
     this.expect(')');
-    return exprTrick(this.settings, trick);
+    return { id: this.builder.internTrick(this.settings, trick) };
   }
 
-  private parseMacro(): Expr | undefined {
+  private parseMacro(): ExprId | undefined {
     /* Check for a macro with the given name */
     const name = this.peek('identifier');
     if (name === undefined) {
@@ -295,7 +282,7 @@ export class ExprParser {
     return expr;
   }
 
-  private parseExprSingle(): Expr | undefined {
+  private parseExprSingle(): ExprId | undefined {
     if (this.accept('(')) {
       const expr = this.parseExpr();
       this.expect(')');
@@ -309,14 +296,13 @@ export class ExprParser {
       || this.parseExprHas()
       || this.parseExprEvent()
       || this.parseExprMasks()
-      || this.parseExprHealth()
       || this.parseExprSetting()
       || this.parseExprTrick()
       || this.parseMacro();
   }
 
-  private parseExprOr(): Expr | undefined {
-    const exprs: Expr[] = [];
+  private parseExprOr(): ExprId | undefined {
+    const exprs: ExprId[] = [];
     let expr = this.parseExprAnd();
     if (expr === undefined) {
       return undefined;
@@ -332,12 +318,12 @@ export class ExprParser {
     if (exprs.length === 1) {
       return exprs[0];
     } else {
-      return exprOr(exprs);
+      return { id: this.builder.internOr(exprs.map(x => x.id)) };
     }
   }
 
-  private parseExprAnd(): Expr | undefined {
-    const exprs: Expr[] = [];
+  private parseExprAnd(): ExprId | undefined {
+    const exprs: ExprId[] = [];
     let expr = this.parseExprSingle();
     if (expr === undefined) {
       return undefined;
@@ -353,11 +339,11 @@ export class ExprParser {
     if (exprs.length === 1) {
       return exprs[0];
     } else {
-      return exprAnd(exprs);
+      return { id: this.builder.internAnd(exprs.map(x => x.id)) };
     }
   }
 
-  private parseExpr(): Expr | undefined {
+  private parseExpr(): ExprId | undefined {
     return this.parseExprOr();
   }
 

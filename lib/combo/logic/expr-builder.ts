@@ -120,8 +120,8 @@ export class ExprBuilder {
     return this.tagMemo(`event:${event}`, state => state.events.has(event));
   }
 
-  internMasks(mask: number) {
-    return this.tagMemo(`masks:${mask}`, state => itemsCount(state, MASKS) === mask);
+  internMasks(count: number) {
+    return this.tagMemo(`masks:${count}`, state => itemsCount(state, MASKS) >= count);
   }
 
   internSetting(settings: Settings, setting: string, value: any) {
