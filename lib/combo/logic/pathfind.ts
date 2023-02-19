@@ -1,6 +1,6 @@
 import { cloneDeep } from 'lodash';
 import { Settings } from '../settings';
-import { Expr } from './expr';
+import { Expr } from './expr-builder';
 
 import { addItem, combinedItems, Items } from './items';
 import { ItemPlacement } from './solve';
@@ -22,6 +22,10 @@ export type PathfinderState = {
   events: Set<string>;
   gossip: Set<string>;
   goal: boolean;
+  memo: {
+    child: Set<number>,
+    adult: Set<number>,
+  };
 }
 
 const defaultState = (settings: Settings): PathfinderState => ({
@@ -36,6 +40,10 @@ const defaultState = (settings: Settings): PathfinderState => ({
   events: new Set(),
   gossip: new Set(),
   goal: false,
+  memo: {
+    child: new Set<number>(),
+    adult: new Set<number>(),
+  }
 });
 
 export type EntranceOverrides = {[k: string]: {[k: string]: string | null}};
@@ -70,7 +78,7 @@ export class Pathfinder {
   }
 
   private evalExpr(expr: Expr, age: Age) {
-    return expr({ items: this.state.items, age, events: this.state.events, ignoreItems: this.opts.ignoreItems || false });
+    return expr({ items: this.state.items, age, memo: this.state.memo[age], events: this.state.events, ignoreItems: this.opts.ignoreItems || false });
   }
 
   private pathfindAreas(age: Age) {

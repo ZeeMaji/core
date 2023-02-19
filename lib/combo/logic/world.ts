@@ -1,6 +1,6 @@
 import { Game, GAMES } from '../config';
 import { gameId } from '../util';
-import { Expr } from './expr';
+import { Expr, ExprBuilder } from './expr-builder';
 import { ExprParser } from './expr-parser';
 import { DATA_POOL, DATA_MACROS, DATA_WORLD, DATA_REGIONS, DATA_ENTRANCES } from '../data';
 import { Settings } from '../settings';
@@ -184,9 +184,9 @@ const loadMacros = (exprParser: ExprParser, game: Game) => {
   }
 };
 
-const loadWorldGame = (world: World, game: Game, settings: Settings) => {
+const loadWorldGame = (world: World, game: Game, settings: Settings, exprBuilder: ExprBuilder) => {
   /* Create the expr parser */
-  const exprParser = new ExprParser(settings, game);
+  const exprParser = new ExprParser(exprBuilder, settings, game);
   loadMacros(exprParser, game);
   loadWorldAreas(world, game, exprParser);
   loadWorldPool(world, game, settings);
@@ -194,9 +194,10 @@ const loadWorldGame = (world: World, game: Game, settings: Settings) => {
 }
 
 export const createWorld = (settings: Settings) => {
+  const exprBuilder = new ExprBuilder();
   const world: World = { areas: {}, checks: {}, dungeons: {}, regions: {}, gossip: {}, checkHints: {}, entrances: [] };
   for (const g of GAMES) {
-    loadWorldGame(world, g, settings);
+    loadWorldGame(world, g, settings, exprBuilder);
   }
   return world;
 };
